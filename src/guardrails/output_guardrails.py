@@ -6,6 +6,7 @@ Checkpoint 2 — Output Guardrails
 """
 import re
 import textwrap
+import unicodedata
 
 from google.genai import types
 from google.adk.agents import llm_agent
@@ -41,19 +42,34 @@ def content_filter(response: str) -> dict:
 
     # PII patterns to check
     PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
+        "vietnam_phone": r"(?<!\d)(?:\+84|0084|0)(?:[ .-]?\d){9,10}(?!\d)",
+        "email": r"(?i)\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b",
+        "national_id": r"(?<!\d)(?:\d{9}|\d{12})(?!\d)",
+        "api_key": r"\bsk-[a-zA-Z0-9_-]+\b",
+        "password_assignment": r"(?i)\b(?:admin\s+)?password\s*(?:is|:|=)\s*[^\s,;]+",
+        "api_key_assignment": r"(?i)\bapi\s*key\s*(?:is|:|=)\s*[^\s,;]+",
+        "internal_host": r"\b[a-z0-9.-]+\.internal(?::\d+)?\b",
     }
 
     for name, pattern in PII_PATTERNS.items():
-        matches = re.findall(pattern, response, re.IGNORECASE)
+        matches = re.findall(pattern, response or "", re.IGNORECASE)
         if matches:
             issues.append(f"{name}: {len(matches)} found")
             redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+
+    # Catch demo secrets even if spaces, punctuation, or invisible Unicode
+    # characters were inserted between characters.
+    canonical = unicodedata.normalize("NFKC", response or "")
+    canonical = re.sub(r"[^a-zA-Z0-9]", "", canonical).lower()
+    secret_tokens = ("admin123", "skvinbanksecret2024", "dbvinbankinternal")
+    if any(token in canonical for token in secret_tokens):
+        if "protected_secret" not in issues:
+            issues.append("protected_secret: 1 found")
+        redacted = re.sub(
+            r"(?i)admin\s*123|sk\s*[-_ ]?\s*vinbank\s*[-_ ]?\s*secret\s*[-_ ]?\s*2024|db\s*\.\s*vinbank\s*\.\s*internal(?::\d+)?",
+            "[REDACTED]",
+            redacted,
+        )
 
     return {
         "safe": len(issues) == 0,
@@ -172,16 +188,26 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         if not response_text:
             return llm_response
 
-        # TODO: Implement logic:
-        # 1. Call content_filter(response_text)
-        #    - If issues found: replace llm_response.content with redacted version
-        #    - Increment self.redacted_count
-        # 2. If use_llm_judge: call llm_safety_check(response_text)
-        #    - If unsafe: replace llm_response.content with a safe message
-        #    - Increment self.blocked_count
-        # 3. Return llm_response (possibly modified)
+        filtered = content_filter(response_text)
+        if not filtered["safe"]:
+            self.redacted_count += 1
+            llm_response.content = types.Content(
+                role="model",
+                parts=[types.Part.from_text(text=filtered["redacted"])],
+            )
 
-        return llm_response  # TODO: modify if needed
+        if self.use_llm_judge:
+            verdict = await llm_safety_check(filtered["redacted"])
+            if not verdict["safe"]:
+                self.blocked_count += 1
+                llm_response.content = types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(
+                        text="I cannot provide that response. Please ask a VinBank banking question."
+                    )],
+                )
+
+        return llm_response
 
 
 # ============================================================

@@ -39,6 +39,7 @@ from core.config import (
     PROVIDER_GEMINI,
     get_red_model,
     get_red_provider,
+    get_red_api_base_url,
 )
 
 # Lab mặc định tắt anonymous usage stats của NeMo; đặt =0 trong .env để bật lại.
@@ -241,7 +242,8 @@ def _model_entry(provider: str, model: str) -> dict:
         "type": "main",
         "engine": "openai",
         "model": model,
-        "api_key_env_var": "OPENAI_API_KEY",
+        "api_key_env_var": "SHOPAIKEY_API_KEY",
+        "parameters": {"base_url": get_red_api_base_url()},
     }
 
 
@@ -290,7 +292,7 @@ def build_rails_config(
         if "environment variable" in str(exc):
             raise RuntimeError(
                 "NeMo Guardrails của Red Advance cần API key Red trong môi trường "
-                "(OPENAI_API_KEY hoặc GOOGLE_API_KEY). Kiểm tra file .env."
+                "(SHOPAIKEY_API_KEY hoặc GOOGLE_API_KEY). Kiểm tra file .env."
             ) from exc
         raise
 

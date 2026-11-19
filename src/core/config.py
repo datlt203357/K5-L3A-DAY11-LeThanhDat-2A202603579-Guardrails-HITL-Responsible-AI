@@ -4,9 +4,8 @@ Lab 11 — Configuration, provider selection, API keys.
 Hai tầng model (không trộn):
 
   Blue Team (CP2–CP3, guardrails / pipeline / protected agent)
-    → CỐ ĐỊNH OpenRouter ``liquid/lfm-3-1.7b:free``
-       https://openrouter.ai/liquid/lfm-3-1.7b:free
-    → Cần ``OPENROUTER_API_KEY``
+    → Liquid API trực tiếp, model ``lfm3-1.7b``
+    → Cần ``LIQUID_API_KEY``
 
   Red Team (CP4)
     → Chọn một provider: OpenAI hoặc Gemini
@@ -32,17 +31,19 @@ except ImportError:
 # --- Providers ---
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
-PROVIDER_OPENROUTER = "openrouter"
+PROVIDER_OPENROUTER = "openrouter"  # backward-compatible alias
+PROVIDER_LIQUID = "liquid"
 
 # --- Blue Team (LOCKED) ---
-BLUE_PROVIDER = PROVIDER_OPENROUTER
-BLUE_MODEL = "liquid/lfm-3-1.7b:free"
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENROUTER_MODEL = BLUE_MODEL  # alias
+BLUE_PROVIDER = PROVIDER_LIQUID
+BLUE_MODEL = "lfm3-1.7b"
+LIQUID_BASE_URL = "https://api.liquid.ai/openai/v1"
+DEFAULT_OPENROUTER_MODEL = BLUE_MODEL  # deprecated name; retained for compatibility
 
 # --- Red Team ---
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_RED_API_BASE_URL = "https://api.shopaikey.com/v1"
 # Model khó — tuỳ chọn (không phải tên agent; không bắt buộc để có B1/B2)
 HARD_OPENAI_MODEL = "gpt-5.6-luna"
 HARD_GEMINI_MODEL = "gemini-3.8-flash"
@@ -96,7 +97,7 @@ except FileNotFoundError:
 
 
 # ---------------------------------------------------------------------------
-# Blue Team — fixed OpenRouter Liquid
+# Blue Team — direct Liquid API
 # ---------------------------------------------------------------------------
 
 def get_blue_provider() -> str:
@@ -104,22 +105,22 @@ def get_blue_provider() -> str:
 
 
 def get_blue_model() -> str:
-    # Hard-locked; env cannot override for the graded Blue Team path.
+    # Locked to the direct Liquid API model for the Blue Team path.
     return BLUE_MODEL
 
 
-def get_openrouter_api_key() -> str:
-    return os.environ.get("OPENROUTER_API_KEY", "").strip()
+def get_liquid_api_key() -> str:
+    return os.environ.get("LIQUID_API_KEY", "").strip()
 
 
 def blue_client_kwargs() -> dict:
-    """OpenAI SDK kwargs pointing at OpenRouter (Blue Team only)."""
+    """OpenAI-compatible SDK kwargs for the direct Liquid API (Blue only)."""
     return {
-        "api_key": get_openrouter_api_key() or None,
-        "base_url": (
-            os.environ.get("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL).strip()
-            or OPENROUTER_BASE_URL
-        ),
+        "api_key": get_liquid_api_key() or None,
+        "base_url": os.environ.get("LIQUID_BASE_URL", LIQUID_BASE_URL).strip()
+        or LIQUID_BASE_URL,
+        "timeout": 30.0,
+        "max_retries": 0,
     }
 
 
@@ -166,11 +167,25 @@ def get_red_model_advance() -> str:
 
 
 def get_openai_api_key() -> str:
-    return os.environ.get("OPENAI_API_KEY", "").strip()
+    """API key for the configured OpenAI-compatible ShopAIKey endpoint."""
+    return os.environ.get("SHOPAIKEY_API_KEY", "").strip()
+
+
+def get_red_api_base_url() -> str:
+    """OpenAI-compatible endpoint used by Red and Red Advance in OpenAI mode."""
+    return (
+        os.environ.get("RED_API_BASE_URL", DEFAULT_RED_API_BASE_URL).strip()
+        or DEFAULT_RED_API_BASE_URL
+    )
 
 
 def red_openai_client_kwargs() -> dict:
-    return {"api_key": get_openai_api_key() or None}
+    return {
+        "api_key": get_openai_api_key() or None,
+        "base_url": get_red_api_base_url(),
+        "timeout": 30.0,
+        "max_retries": 0,
+    }
 
 
 def red_provider_label(tier: str = "advance") -> str:
@@ -206,7 +221,7 @@ def uses_openai_sdk() -> bool:
 
 
 def openai_compatible_client_kwargs() -> dict:
-    """Default client kwargs = Red Team OpenAI (not Blue/OpenRouter)."""
+    """Default client kwargs = Red Team OpenAI (not Blue/Liquid)."""
     return red_openai_client_kwargs()
 
 
@@ -235,10 +250,10 @@ def is_harder_model() -> bool:
 
 
 def setup_api_key():
-    """Ensure keys for Blue (OpenRouter) + Red / Red Advance (OpenAI or Gemini)."""
-    if not get_openrouter_api_key():
-        os.environ["OPENROUTER_API_KEY"] = input(
-            "Enter OpenRouter API Key (Blue): "
+    """Ensure keys for Blue (Liquid) + Red / Red Advance (OpenAI or Gemini)."""
+    if not get_liquid_api_key():
+        os.environ["LIQUID_API_KEY"] = input(
+            "Enter Liquid API Key (Blue): "
         ).strip()
     print(f"Blue  — {blue_provider_label()}  [LOCKED]")
 
@@ -251,7 +266,9 @@ def setup_api_key():
         print(f"Red / Red Advance  — gemini:{model}")
     else:
         if not get_openai_api_key():
-            os.environ["OPENAI_API_KEY"] = input("Enter OpenAI API Key (Red): ").strip()
+            os.environ["SHOPAIKEY_API_KEY"] = input(
+                "Enter ShopAIKey API key (Red): "
+            ).strip()
         print(f"Red / Red Advance  — openai:{model}")
 
     print(
